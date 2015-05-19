@@ -313,6 +313,16 @@ PCIINTxRoute ich9_route_intx_pin_to_irq(void *opaque, int pirq_pin)
     return route;
 }
 
+void ich9_generate_smi(void)
+{
+    cpu_interrupt(first_cpu, CPU_INTERRUPT_SMI);
+}
+
+void ich9_generate_nmi(void)
+{
+    cpu_interrupt(first_cpu, CPU_INTERRUPT_NMI);
+}
+
 static int ich9_lpc_sci_irq(ICH9LPCState *lpc)
 {
     switch (lpc->d.config[ICH9_LPC_ACPI_CTRL] &
@@ -357,11 +367,12 @@ static void ich9_set_sci(void *opaque, int irq_num, int level)
     }
 }
 
-void ich9_lpc_pm_init(PCIDevice *lpc_pci)
+void ich9_lpc_pm_init(PCIDevice *lpc_pci, bool enable_tco)
 {
     ICH9LPCState *lpc = ICH9_LPC_DEVICE(lpc_pci);
 
-    ich9_pm_init(lpc_pci, &lpc->pm, qemu_allocate_irq(ich9_set_sci, lpc, 0));
+    ich9_pm_init(lpc_pci, &lpc->pm, enable_tco,
+                 qemu_allocate_irq(ich9_set_sci, lpc, 0));
     ich9_lpc_reset(&lpc->d.qdev);
 }
 
