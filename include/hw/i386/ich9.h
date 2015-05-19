@@ -17,8 +17,11 @@
 void ich9_lpc_set_irq(void *opaque, int irq_num, int level);
 int ich9_lpc_map_irq(PCIDevice *pci_dev, int intx);
 PCIINTxRoute ich9_route_intx_pin_to_irq(void *opaque, int pirq_pin);
-void ich9_lpc_pm_init(PCIDevice *pci_lpc);
+void ich9_lpc_pm_init(PCIDevice *pci_lpc, bool enable_tco);
 I2CBus *ich9_smb_init(PCIBus *bus, int devfn, uint32_t smb_io_base);
+
+void ich9_generate_smi(void);
+void ich9_generate_nmi(void);
 
 #define ICH9_CC_SIZE                            (16 * 1024)     /* 16KB */
 
@@ -162,6 +165,8 @@ Object *ich9_lpc_find(void);
 #define ICH9_LPC_RCBA_BA_MASK                   Q35_MASK(32, 31, 14)
 #define ICH9_LPC_RCBA_EN                        0x1
 #define ICH9_LPC_RCBA_DEFAULT                   0x0
+#define ICH9_LPC_RCBA_GCS                       0x3410
+#define ICH9_LPC_RCBA_GCS_NO_REBOOT             (1 << 5)
 
 #define ICH9_LPC_PIC_NUM_PINS                   16
 #define ICH9_LPC_IOAPIC_NUM_PINS                24
@@ -186,7 +191,10 @@ Object *ich9_lpc_find(void);
 #define ICH9_PMIO_GPE0_LEN                      16
 #define ICH9_PMIO_SMI_EN                        0x30
 #define ICH9_PMIO_SMI_EN_APMC_EN                (1 << 5)
+#define ICH9_PMIO_SMI_EN_TCO_EN                 (1 << 13)
 #define ICH9_PMIO_SMI_STS                       0x34
+#define ICH9_PMIO_TCO_RLD                       0x60
+#define ICH9_PMIO_TCO_LEN                       32
 
 /* FADT ACPI_ENABLE/ACPI_DISABLE */
 #define ICH9_APM_ACPI_ENABLE                    0x2
