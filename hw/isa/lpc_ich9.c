@@ -313,6 +313,16 @@ PCIINTxRoute ich9_route_intx_pin_to_irq(void *opaque, int pirq_pin)
     return route;
 }
 
+void ich9_generate_smi(void)
+{
+    cpu_interrupt(first_cpu, CPU_INTERRUPT_SMI);
+}
+
+void ich9_generate_nmi(void)
+{
+    cpu_interrupt(first_cpu, CPU_INTERRUPT_NMI);
+}
+
 static int ich9_lpc_sci_irq(ICH9LPCState *lpc)
 {
     switch (lpc->d.config[ICH9_LPC_ACPI_CTRL] &
