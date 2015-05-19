@@ -30,6 +30,7 @@
 #include "qemu/timer.h"
 #include "sysemu/sysemu.h"
 #include "hw/acpi/acpi.h"
+#include "hw/acpi/tco.h"
 #include "sysemu/kvm.h"
 #include "exec/address-spaces.h"
 
@@ -92,8 +93,15 @@ static void ich9_smi_writel(void *opaque, hwaddr addr, uint64_t val,
                             unsigned width)
 {
     ICH9LPCPMRegs *pm = opaque;
+    TCOIORegs *tr = &pm->tco_regs;
+
     switch (addr) {
     case 0:
+        /* once TCO_LOCK bit is set, TCO_EN bit cannot be overwritten */
+        if (tr->tco.cnt1 & TCO_LOCK) {
+            val &= ~ICH9_PMIO_SMI_EN_TCO_EN;
+            val |= pm->smi_en & ICH9_PMIO_SMI_EN_TCO_EN;
+        }
         pm->smi_en = val;
         break;
     }
@@ -104,6 +112,29 @@ static const MemoryRegionOps ich9_smi_ops = {
     .write = ich9_smi_writel,
     .valid.min_access_size = 4,
     .valid.max_access_size = 4,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+static uint64_t ich9_tco_readw(void *opaque, hwaddr addr, unsigned width)
+{
+    ICH9LPCPMRegs *pm = opaque;
+    return acpi_pm_tco_ioport_readw(&pm->tco_regs, addr);
+}
+
+static void ich9_tco_writew(void *opaque, hwaddr addr, uint64_t val,
+                            unsigned width)
+{
+    ICH9LPCPMRegs *pm = opaque;
+    acpi_pm_tco_ioport_writew(&pm->tco_regs, addr, val);
+}
+
+static const MemoryRegionOps ich9_tco_ops = {
+    .read = ich9_tco_readw,
+    .write = ich9_tco_writew,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 4,
+    .impl.min_access_size = 1,
+    .impl.max_access_size = 2,
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
@@ -229,6 +260,11 @@ void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm,
     memory_region_init_io(&pm->io_smi, OBJECT(lpc_pci), &ich9_smi_ops, pm,
                           "acpi-smi", 8);
     memory_region_add_subregion(&pm->io, ICH9_PMIO_SMI_EN, &pm->io_smi);
+
+    acpi_pm_tco_init(&pm->tco_regs);
+    memory_region_init_io(&pm->io_tco, OBJECT(lpc_pci), &ich9_tco_ops, pm,
+			  "sm-tco", ICH9_PMIO_TCO_LEN);
+    memory_region_add_subregion(&pm->io, ICH9_PMIO_TCO_RLD, &pm->io_tco);
 
     pm->irq = sci_irq;
     qemu_register_reset(pm_reset, pm);
