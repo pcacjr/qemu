@@ -1,0 +1,254 @@
+/*
+ * QEMU ICH9 TCO emulation
+ *
+ * Copyright (c) 2015 Paulo Alcantara <pcacjr@zytor.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+#include "qemu-common.h"
+#include "sysemu/watchdog.h"
+#include "hw/i386/ich9.h"
+
+#include "hw/acpi/tco.h"
+
+//#define DEBUG
+
+#ifdef DEBUG
+#define TCO_DEBUG(fmt, ...)                                     \
+    do {                                                        \
+        fprintf(stderr, "%s "fmt, __func__, ## __VA_ARGS__);    \
+    } while (0)
+#else
+#define TCO_DEBUG(fmt, ...) do { } while (0)
+#endif
+
+enum {
+    TCO_RLD_DEFAULT         = 0x0000,
+    TCO_DAT_IN_DEFAULT      = 0x00,
+    TCO_DAT_OUT_DEFAULT     = 0x00,
+    TCO1_STS_DEFAULT        = 0x0000,
+    TCO2_STS_DEFAULT        = 0x0000,
+    TCO1_CNT_DEFAULT        = 0x0000,
+    TCO2_CNT_DEFAULT        = 0x0008,
+    TCO_MESSAGE1_DEFAULT    = 0x00,
+    TCO_MESSAGE2_DEFAULT    = 0x00,
+    TCO_WDCNT_DEFAULT       = 0x00,
+    TCO_TMR_DEFAULT         = 0x0004,
+    SW_IRQ_GEN_DEFAULT      = 0x03,
+};
+
+static inline void tco_timer_reload(TCOIORegs *tr)
+{
+    tr->expire_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+        ((int64_t)(tr->tco.tmr & TCO_TMR_MASK) * TCO_TICK_NSEC);
+    timer_mod(tr->tco_timer, tr->expire_time);
+}
+
+static inline void tco_timer_stop(TCOIORegs *tr)
+{
+    tr->expire_time = -1;
+}
+
+static void tco_timer_expired(void *opaque)
+{
+    TCOIORegs *tr = opaque;
+    ICH9LPCPMRegs *pm = container_of(tr, ICH9LPCPMRegs, tco_regs);
+    ICH9LPCState *lpc = container_of(pm, ICH9LPCState, pm);
+    uint32_t gcs = pci_get_long(lpc->chip_config + ICH9_LPC_RCBA_GCS);
+
+    tr->tco.rld = 0;
+    tr->tco.sts1 |= TCO_TIMEOUT;
+    if (++tr->timeouts_no == 2) {
+        tr->tco.sts1 |= TCO_SECOND_TO_STS;
+        tr->tco.sts1 |= TCO_BOOT_STS;
+        tr->timeouts_no = 0;
+
+        if (!(gcs & ICH9_LPC_RCBA_GCS_NO_REBOOT)) {
+            watchdog_perform_action();
+            tco_timer_stop(tr);
+            return;
+        }
+    }
+
+    if (pm->smi_en & ICH9_PMIO_SMI_EN_TCO_EN) {
+        ich9_generate_smi();
+    } else {
+        ich9_generate_nmi();
+    }
+    tr->tco.rld = tr->tco.tmr;
+    tco_timer_reload(tr);
+}
+
+void acpi_pm_tco_init(TCOIORegs *tr)
+{
+    *tr = (TCOIORegs) {
+        .tco = {
+            .rld      = TCO_RLD_DEFAULT,
+            .din      = TCO_DAT_IN_DEFAULT,
+            .dout     = TCO_DAT_OUT_DEFAULT,
+            .sts1     = TCO1_STS_DEFAULT,
+            .sts2     = TCO2_STS_DEFAULT,
+            .cnt1     = TCO1_CNT_DEFAULT,
+            .cnt2     = TCO2_CNT_DEFAULT,
+            .msg1     = TCO_MESSAGE1_DEFAULT,
+            .msg2     = TCO_MESSAGE2_DEFAULT,
+            .wdcnt    = TCO_WDCNT_DEFAULT,
+            .tmr      = TCO_TMR_DEFAULT,
+        },
+        .sw_irq_gen    = SW_IRQ_GEN_DEFAULT,
+        .tco_timer     = timer_new_ns(QEMU_CLOCK_VIRTUAL, tco_timer_expired, tr),
+        .expire_time   = -1,
+        .timeouts_no   = 0,
+    };
+}
+
+/* NOTE: values of 0 or 1 will be ignored by ICH */
+static inline int can_start_tco_timer(TCOIORegs *tr)
+{
+    return !(tr->tco.cnt1 & TCO_TMR_HLT) && tr->tco.tmr > 1;
+}
+
+uint32_t acpi_pm_tco_ioport_readw(TCOIORegs *tr, uint32_t addr)
+{
+    uint16_t rld;
+
+    switch (addr) {
+    case TCO_RLD:
+        if (tr->expire_time != -1) {
+            int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+            int64_t elapsed = (tr->expire_time - now) / TCO_TICK_NSEC;
+            rld = (uint16_t)elapsed | (tr->tco.rld & ~TCO_RLD_MASK);
+        } else {
+            rld = tr->tco.rld;
+        }
+        return rld;
+    case TCO_DAT_IN:
+        return tr->tco.din;
+    case TCO_DAT_OUT:
+        return tr->tco.dout;
+    case TCO1_STS:
+        return tr->tco.sts1;
+    case TCO2_STS:
+        return tr->tco.sts2;
+    case TCO1_CNT:
+        return tr->tco.cnt1;
+    case TCO2_CNT:
+        return tr->tco.cnt2;
+    case TCO_MESSAGE1:
+        return tr->tco.msg1;
+    case TCO_MESSAGE2:
+        return tr->tco.msg2;
+    case TCO_WDCNT:
+        return tr->tco.wdcnt;
+    case TCO_TMR:
+        return tr->tco.tmr;
+    case SW_IRQ_GEN:
+        return tr->sw_irq_gen;
+    }
+    return 0;
+}
+
+void acpi_pm_tco_ioport_writew(TCOIORegs *tr, uint32_t addr, uint32_t val)
+{
+    switch (addr) {
+    case TCO_RLD:
+        tr->timeouts_no = 0;
+        if (can_start_tco_timer(tr)) {
+            tr->tco.rld = tr->tco.tmr;
+            tco_timer_reload(tr);
+        } else {
+            tr->tco.rld = val;
+        }
+        break;
+    case TCO_DAT_IN:
+        tr->tco.din = val;
+        tr->tco.sts1 |= SW_TCO_SMI;
+        ich9_generate_smi();
+        break;
+    case TCO_DAT_OUT:
+        tr->tco.dout = val;
+        tr->tco.sts1 |= TCO_INT_STS;
+        /* TODO: cause an interrupt, as selected by the TCO_INT_SEL bits */
+        break;
+    case TCO1_STS:
+        tr->tco.sts1 = val & TCO1_STS_MASK;
+        break;
+    case TCO2_STS:
+        tr->tco.sts2 = val & TCO2_STS_MASK;
+        break;
+    case TCO1_CNT:
+        val &= TCO1_CNT_MASK;
+        /*
+         * once TCO_LOCK bit is set, it can not be cleared by software. a reset
+         * is required to change this bit from 1 to 0 -- it defaults to 0.
+         */
+        tr->tco.cnt1 = tr->tco.cnt1 & TCO_LOCK ? val | TCO_LOCK : val;
+        if (can_start_tco_timer(tr)) {
+            tr->tco.rld = tr->tco.tmr;
+            tco_timer_reload(tr);
+        } else {
+            tco_timer_stop(tr);
+        }
+        break;
+    case TCO2_CNT:
+        tr->tco.cnt2 = val;
+        break;
+    case TCO_MESSAGE1:
+        tr->tco.msg1 = val;
+        break;
+    case TCO_MESSAGE2:
+        tr->tco.msg2 = val;
+        break;
+    case TCO_WDCNT:
+        tr->tco.wdcnt = val;
+        break;
+    case TCO_TMR:
+        tr->tco.tmr = val;
+        break;
+    case SW_IRQ_GEN:
+        tr->sw_irq_gen = val;
+        break;
+    }
+}
+
+const VMStateDescription vmstate_tco_io_sts = {
+    .name = "tco io device status",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_BOOL(use_tco, TCOIORegs),
+        VMSTATE_UINT16(tco.rld, TCOIORegs),
+        VMSTATE_UINT8(tco.din, TCOIORegs),
+        VMSTATE_UINT8(tco.dout, TCOIORegs),
+        VMSTATE_UINT16(tco.sts1, TCOIORegs),
+        VMSTATE_UINT16(tco.sts2, TCOIORegs),
+        VMSTATE_UINT16(tco.cnt1, TCOIORegs),
+        VMSTATE_UINT16(tco.cnt2, TCOIORegs),
+        VMSTATE_UINT8(tco.msg1, TCOIORegs),
+        VMSTATE_UINT8(tco.msg2, TCOIORegs),
+        VMSTATE_UINT8(tco.wdcnt, TCOIORegs),
+        VMSTATE_UINT16(tco.tmr, TCOIORegs),
+        VMSTATE_UINT8(sw_irq_gen, TCOIORegs),
+        VMSTATE_TIMER_PTR(tco_timer, TCOIORegs),
+        VMSTATE_INT64(expire_time, TCOIORegs),
+        VMSTATE_UINT8(timeouts_no, TCOIORegs),
+        VMSTATE_END_OF_LIST()
+    }
+};
