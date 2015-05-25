@@ -114,6 +114,20 @@ DefinitionBlock (
         }
     }
 
+/****************************************************************
+ * Chipset Configuration Registers
+ ****************************************************************/
+Scope(\_SB.PCI0) {
+    Device (CCR) {
+        Name (_HID, EISAID("PNP0C02"))
+        Name (_UID, 1)
+
+        Name (_CRS, ResourceTemplate() {
+	    Memory32Fixed(ReadWrite, 0xfed1c000, 0x00004000) // RCBA
+        })
+    }
+}
+
 #include "acpi-dsdt-hpet.dsl"
 
 
