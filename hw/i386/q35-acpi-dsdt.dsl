@@ -114,6 +114,7 @@ DefinitionBlock (
         }
     }
 
+#include "acpi-dsdt-pdrc.dsl"
 #include "acpi-dsdt-hpet.dsl"
 
 
