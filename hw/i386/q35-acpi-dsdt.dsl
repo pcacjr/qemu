@@ -114,6 +114,22 @@ DefinitionBlock (
         }
     }
 
+#include "hw/i386/ich9-cc.h"
+
+/****************************************************************
+ * Chipset Configuration Registers
+ ****************************************************************/
+Scope(\_SB.PCI0) {
+    Device (CCR) {
+        Name (_HID, EISAID("PNP0C02"))
+        Name (_UID, 1)
+
+        Name (_CRS, ResourceTemplate() {
+            Memory32Fixed(ReadWrite, RCBA_BASE_ADDR, RCRB_SIZE)
+        })
+    }
+}
+
 #include "acpi-dsdt-hpet.dsl"
 
 
