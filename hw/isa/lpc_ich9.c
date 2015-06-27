@@ -575,11 +575,49 @@ static void ich9_lpc_get_sci_int(Object *obj, Visitor *v,
     visit_type_uint32(v, &value, name, errp);
 }
 
+static void ich9_lpc_get_spkr_pin(Object *obj, Visitor *v,
+                                  void *opaque, const char *name,
+                                  Error **errp)
+{
+    ICH9LPCState *lpc = opaque;
+    uint8_t value = lpc->pin_strap.spkr;
+
+    visit_type_uint8(v, &value, name, errp);
+}
+
+static void ich9_lpc_set_spkr_pin(Object *obj, Visitor *v,
+                                  void *opaque, const char *name,
+                                  Error **errp)
+{
+    ICH9LPCState *lpc = opaque;
+    Error *local_err = NULL;
+    uint8_t value;
+    uint32_t *gcs;
+
+    visit_type_uint8(v, &value, name, &local_err);
+    if (local_err) {
+        goto out;
+    }
+    value &= ICH9_PS_SPKR_PIN_MASK;
+    if (value & ICH9_PS_SPKR_PIN_HIGH) {
+        gcs = (uint32_t *)&lpc->chip_config[ICH9_CC_GCS];
+        *gcs |= ICH9_CC_GCS_NO_REBOOT;
+    }
+    lpc->pin_strap.spkr = value;
+out:
+    error_propagate(errp, local_err);
+}
+
 static void ich9_lpc_add_properties(ICH9LPCState *lpc)
 {
     static const uint8_t acpi_enable_cmd = ICH9_APM_ACPI_ENABLE;
     static const uint8_t acpi_disable_cmd = ICH9_APM_ACPI_DISABLE;
+    lpc->pin_strap.spkr = ICH9_PS_SPKR_PIN_DEFAULT;
 
+    object_property_add(OBJECT(lpc), "pin-spkr", "uint8",
+                        ich9_lpc_get_spkr_pin,
+                        ich9_lpc_set_spkr_pin,
+                        NULL, lpc, NULL);
     object_property_add(OBJECT(lpc), ACPI_PM_PROP_SCI_INT, "uint32",
                         ich9_lpc_get_sci_int,
                         NULL, NULL, NULL, NULL);

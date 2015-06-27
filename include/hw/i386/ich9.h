@@ -46,6 +46,11 @@ typedef struct ICH9LPCState {
     ICH9LPCPMRegs pm;
     uint32_t sci_level; /* track sci level */
 
+    /* 2.24 Pin Straps */
+    struct {
+        uint8_t spkr;
+    } pin_strap;
+
     /* 10.1 Chipset Configuration registers(Memory Space)
      which is pointed by RCBA */
     uint8_t chip_config[ICH9_CC_SIZE];
@@ -71,6 +76,12 @@ Object *ich9_lpc_find(void);
 
 #define Q35_MASK(bit, ms_bit, ls_bit) \
 ((uint##bit##_t)(((1ULL << ((ms_bit) + 1)) - 1) & ~((1ULL << ls_bit) - 1)))
+
+/* ICH9: Pin Straps */
+#define ICH9_PS_SPKR_PIN_LOW        0x01
+#define ICH9_PS_SPKR_PIN_HIGH       0x02
+#define ICH9_PS_SPKR_PIN_MASK       0x03
+#define ICH9_PS_SPKR_PIN_DEFAULT    ICH9_PS_SPKR_PIN_LOW
 
 /* ICH9: Chipset Configuration Registers */
 #define ICH9_CC_ADDR_MASK                       (ICH9_CC_SIZE - 1)
