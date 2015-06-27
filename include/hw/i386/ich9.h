@@ -57,7 +57,7 @@ typedef struct ICH9LPCState {
 
     /* isa bus */
     ISABus *isa_bus;
-    MemoryRegion rbca_mem;
+    MemoryRegion rcba_mem;
     Notifier machine_ready;
 
     qemu_irq *pic;
